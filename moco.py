@@ -8,7 +8,7 @@ class MoCo(nn.Module):
         super(MoCo, self).__init__()
         self.dim = 128
         
-        self.register_buffer('queue', torch.randn(q_size, self.dim, requires_grad=False))
+        self.register_buffer('queue', F.normalize(torch.randn(q_size, self.dim)))
         self.idx = 0
         self.max_queue_size = q_size
         
