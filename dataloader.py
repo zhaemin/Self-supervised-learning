@@ -3,9 +3,9 @@ import torchvision
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader
 
-class MoCoTransform(torch.nn.Module):
+class SSLTransform(torch.nn.Module):
     def __init__(self):
-        super(MoCoTransform, self).__init__()
+        super(SSLTransform, self).__init__()
         self.transform = transforms.Compose([ 
             transforms.RandomResizedCrop((32,32)),
             transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
@@ -46,9 +46,8 @@ def load_dataset(args):
         testset = torchvision.datasets.CIFAR10(root = '../data/cifar10', train=False, download=True, transform=transform_test)
         num_classes = 100
         
-    if args.model == 'moco' or args.model == 'simclr':
-        mocotransform = MoCoTransform()
-        trainset = torchvision.datasets.CIFAR10(root = '../data/cifar10', train=True, download=True, transform=mocotransform)
+    ssltransform = SSLTransform()
+    trainset = torchvision.datasets.CIFAR10(root = '../data/cifar10', train=True, download=True, transform=ssltransform)
         
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=2)
     testloader = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=False, num_workers=2)

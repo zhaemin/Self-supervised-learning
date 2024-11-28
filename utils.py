@@ -6,8 +6,7 @@ import torch.optim as optim
 
 from warmup import WarmupCosineAnnealingScheduler
 
-import models.moco as moco
-import models.simclr as simclr
+import models.SSL as ssl
 
 def parsing_argument():
     parser = argparse.ArgumentParser(description="argparse_test")
@@ -32,14 +31,16 @@ def set_parameters(args, net):
         #scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[20, 40, 80, 100, 120], gamma=0.5)
     if args.optimizer == 'sgd':
         optimizer = optim.SGD(params=net.parameters(), lr=args.learningrate, momentum=0.9, nesterov=True)
-        scheduler = WarmupCosineAnnealingScheduler(optimizer, warmup_steps=10, base_lr=args.learningrate, T_max=100, eta_min=1e-3)
-        #scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100, eta_min=1e-4)
+        #scheduler = WarmupCosineAnnealingScheduler(optimizer, warmup_steps=10, base_lr=args.learningrate, T_max=100, eta_min=1e-3)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100, eta_min=1e-3)
 
     return optimizer,scheduler
 
 def load_model(args):
     if args.model == 'moco':
-        net = moco.MoCo(q_size=1024, momentum=0.999)
+        net = ssl.MoCo(q_size=4096, momentum=0.999)
     elif args.model == 'simclr':
-        net = simclr.SimCLR()
+        net = ssl.SimCLR()
+    elif args.model == 'swav':
+        net = ssl.SwAV()
     return net
