@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import datetime
 import torch.nn.utils as utils
+import torch.optim as optim
 
 import dataloader
 
@@ -49,7 +50,7 @@ def knn_test(testloader, net, representations, label_list, device):
     
     for data in testloader:
         inputs, labels = data
-        inputs, labels = inputs[2].to(device), labels.to(device)
+        inputs, labels = inputs.to(device), labels.to(device)
         
         with torch.no_grad():
             x = net.encoding(inputs)
@@ -64,24 +65,22 @@ def knn_test(testloader, net, representations, label_list, device):
     return acc
 
 
-def fewshot_test(testloader, net, args, optimizer, device):
-    net.eval()
+def fewshot_test(testloader, net, args, device):
     total_acc = 0
+    optimizer = optim.SGD(params=list(net.projector.parameters()) + list(net.predictor.parameters()), lr=args.learningrate, weight_decay=0.001, momentum=0.9, nesterov=True)
     
     for i, data in enumerate(testloader):
         inputs, labels = data
         inputs, labels = inputs.to(device), labels.to(device)
         
         if args.adaptation and args.model == 'psco' and i < 15: #task = 4 -> 60 episode로 adaptation
-            loss = net.cross_domain_adaptation(inputs, device)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-        
-        with torch.no_grad():
-            if args.model == 'psco':
-                acc = net.fewshot_acc(args, inputs[2], labels, args.test_num_ways, device)
-            else:
+            adaptation = True
+            
+        net.eval()
+        if args.model == 'psco':
+            acc = net.fewshot_acc(args, inputs, labels, args.test_num_ways, adaptation, optimizer, device)
+        else:
+            with torch.no_grad():
                 acc = net(args, inputs, labels, args.test_num_ways, device)
         
         total_acc += acc
@@ -89,7 +88,7 @@ def fewshot_test(testloader, net, args, optimizer, device):
     
     return accuracy
 
-def crossdomain_test(args, net, device, outputs_log):
+def crossdomain_test(args, net, optimizer, device, outputs_log):
     print('--- crossdomain test ---')
     if args.dataset == 'BSCD':
         dataset_list = ['CropDisease', 'EuroSAT', 'ISIC', 'ChestX']
@@ -140,7 +139,7 @@ def main():
     
     net = load_model(args)
     net.to(device)
-    net.load_state_dict(torch.load('protonet_600ep_0.001lr.pt'))
+    net.load_state_dict(torch.load('psco.pt'))
     optimizer,scheduler = set_parameters(args, net)
     
     if args.train:
@@ -156,7 +155,7 @@ def main():
         print('fewshot_acc : %.3f'%(acc), file=outputs_log)
     
     elif args.test == 'crossdomain':
-        crossdomain_test(args, net, device, outputs_log)
+        crossdomain_test(args, net, optimizer, device, outputs_log)
         
     outputs_log.close()
     writer.close()

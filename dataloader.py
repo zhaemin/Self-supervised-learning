@@ -26,7 +26,7 @@ class SSLTransform(torch.nn.Module):
         
         self.transform_test = transforms.Compose([ 
             transforms.ToTensor(),
-            transforms.Resize((img_size, img_size), antialias=True),
+            #transforms.Resize((img_size, img_size), antialias=True),
             transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225))])
         
     def __call__(self, x):
@@ -134,14 +134,11 @@ def load_dataset(args, dataset):
             transforms.ToTensor(),
             transforms.Resize((84,84), antialias=True),
             transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225))])
-        ssltransform = SSLTransform(84)
         
-        if args.adaptation:
-            testset = cd_dataset.load_crossdomain_dataset(dataset, ssltransform)
-        else:
-            testset = cd_dataset.load_crossdomain_dataset(dataset, transform_test)
+        testset = cd_dataset.load_crossdomain_dataset(dataset, transform_test)
             
         testset_labels = torch.LongTensor(testset.targets)
+        print(len(testset_labels))
         test_sampler = FewShotSampler(testset_labels, args.test_num_ways, args.num_shots, args.num_queries, 150, num_tasks=4)
         testloader = DataLoader(testset, batch_sampler=test_sampler, pin_memory=True)
     
