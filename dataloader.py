@@ -4,6 +4,7 @@ import torchvision.transforms as transforms
 from torch.utils.data import Sampler, DataLoader
 
 import numpy as np
+import cd_dataset
 
 class SSLTransform(torch.nn.Module):
     def __init__(self, img_size):
@@ -25,6 +26,7 @@ class SSLTransform(torch.nn.Module):
         
         self.transform_test = transforms.Compose([ 
             transforms.ToTensor(),
+            transforms.Resize((img_size, img_size), antialias=True),
             transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225))])
         
     def __call__(self, x):
@@ -85,18 +87,12 @@ class FewShotSampler(Sampler):
     def __len__(self):
         return self.episodes
 
-def load_dataset(args):
-    transform_train = transforms.Compose([ 
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomResizedCrop((32,32)),
-        transforms.ToTensor(),
-        transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225))])
-    
+def load_dataset(args, dataset):
     transform_test = transforms.Compose([ 
         transforms.ToTensor(),
         transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225))])
     
-    if args.dataset == 'cifar10':
+    if dataset == 'cifar10':
         ssltransform = SSLTransform(32)
         trainset = torchvision.datasets.CIFAR10(root = '../data/cifar10', train=True, download=True, transform=ssltransform)
         testset = torchvision.datasets.CIFAR10(root = '../data/cifar10', train=False, download=True, transform=transform_test)
@@ -107,10 +103,11 @@ def load_dataset(args):
         
         num_classes = 10
     
-    elif args.dataset == 'miniimagenet':
+    elif dataset == 'miniimagenet':
         ssltransform = SSLTransform(84)
+        
         trainset = torchvision.datasets.ImageFolder(root='../data/fewshotdata/miniimagenet/data/train', transform=ssltransform)
-        testset = torchvision.datasets.ImageFolder(root='../data/fewshotdata/miniimagenet/data/test', transform=transform_test)
+        testset = torchvision.datasets.ImageFolder(root='../data/fewshotdata/miniimagenet/data/test', transform=ssltransform)
         valset = torchvision.datasets.ImageFolder(root='../data/fewshotdata/miniimagenet/data/val', transform=transform_test)
         num_classes = 64
         
@@ -121,7 +118,31 @@ def load_dataset(args):
         val_sampler = FewShotSampler(valset_labels, args.test_num_ways, args.num_shots, args.num_queries, 25, num_tasks=4)
         
         trainloader = DataLoader(trainset, batch_size=args.batch_size, shuffle=True, drop_last=True, num_workers=2, pin_memory=True)
-        testloader = DataLoader(testset, batch_sampler=test_sampler, pin_memory=True)
         valloader = DataLoader(valset, batch_sampler=val_sampler, pin_memory=True)
         
+        if args.test == 'fewshot' or args.test == 'crossdomain':
+            testloader = DataLoader(testset, batch_sampler=test_sampler, pin_memory=True)
+        else:
+            testloader = DataLoader(testset, batch_size=args.batch_size, shuffle=False, drop_last=True, num_workers=2)
+        
+    else:
+        trainloader = None
+        valloader = None
+        num_classes = None
+        
+        transform_test = transforms.Compose([ 
+            transforms.ToTensor(),
+            transforms.Resize((84,84), antialias=True),
+            transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225))])
+        ssltransform = SSLTransform(84)
+        
+        if args.adaptation:
+            testset = cd_dataset.load_crossdomain_dataset(dataset, ssltransform)
+        else:
+            testset = cd_dataset.load_crossdomain_dataset(dataset, transform_test)
+            
+        testset_labels = torch.LongTensor(testset.targets)
+        test_sampler = FewShotSampler(testset_labels, args.test_num_ways, args.num_shots, args.num_queries, 150, num_tasks=4)
+        testloader = DataLoader(testset, batch_sampler=test_sampler, pin_memory=True)
+    
     return trainloader, testloader, valloader, num_classes

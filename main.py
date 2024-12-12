@@ -49,7 +49,7 @@ def knn_test(testloader, net, representations, label_list, device):
     
     for data in testloader:
         inputs, labels = data
-        inputs, labels = inputs.to(device), labels.to(device)
+        inputs, labels = inputs[2].to(device), labels.to(device)
         
         with torch.no_grad():
             x = net.encoding(inputs)
@@ -63,35 +63,45 @@ def knn_test(testloader, net, representations, label_list, device):
     
     return acc
 
-def fewshot_test(testloader, net, shots, device):
-    total = 0
-    correct = 0
+
+def fewshot_test(testloader, net, args, optimizer, device):
     net.eval()
+    total_acc = 0
     
-    for data in testloader:
+    for i, data in enumerate(testloader):
         inputs, labels = data
         inputs, labels = inputs.to(device), labels.to(device)
         
+        if args.adaptation and args.model == 'psco' and i < 15: #task = 4 -> 60 episode로 adaptation
+            loss = net.cross_domain_adaptation(inputs, device)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+        
         with torch.no_grad():
-            x = net.projector(net.encoder(inputs))
-            tasks = split_support_query_set(x, labels, device, num_tasks=4)
-            
-            for x_support, x_query, y_support, y_query in tasks:
-                x_support = F.normalize(x_support)
-                x_query = F.normalize(net.predictor(x_query)) # q d
-                prototypes = F.normalize(torch.sum(x_support.view(5, shots, -1), dim=1), dim=1) # 5 d
-                
-                logits = torch.einsum('qd, wd -> qw', x_query, prototypes)
-                _, predicted = torch.max(logits.data, 1)
-                correct += (predicted == y_query).sum().item()
-                total += y_query.size(0)
-            
-    acc = 100 * correct / total
+            if args.model == 'psco':
+                acc = net.fewshot_acc(args, inputs[2], labels, args.test_num_ways, device)
+            else:
+                acc = net(args, inputs, labels, args.test_num_ways, device)
+        
+        total_acc += acc
+    accuracy = total_acc/len(testloader)
     
-    return acc
+    return accuracy
+
+def crossdomain_test(args, net, device, outputs_log):
+    print('--- crossdomain test ---')
+    if args.dataset == 'BSCD':
+        dataset_list = ['CropDisease', 'EuroSAT', 'ISIC', 'ChestX']
+        for dataset in dataset_list:
+            trainloader, testloader, valloader, num_classes = dataloader.load_dataset(args, dataset)
+            print(f'--- {dataset} test ---')
+            acc = fewshot_test(testloader, net, args, device=device)
+            print(f'{dataset} fewshot_acc : %.3f'%(acc))
+            print(f'{dataset} fewshot_acc : %.3f'%(acc), file=outputs_log)
+
 
 def train(args, trainloader, testloader, valloader, net, optimizer, scheduler, device, writer, outputs_log):
-    
     for epoch in range(args.epochs):
         running_loss, representations, label_list = train_per_epoch(args, trainloader, net, optimizer, device)
         
@@ -100,7 +110,7 @@ def train(args, trainloader, testloader, valloader, net, optimizer, scheduler, d
             acc = knn_test(testloader, net, representations, label_list, device)
             writer.add_scalar('train / KNN_acc', acc, epoch+1)
         elif args.test == 'fewshot' and (epoch+1) % 5 == 0:
-            acc = fewshot_test(valloader, net, shots=5, device=device)
+            acc = fewshot_test(valloader, net, args, device=device)
             writer.add_scalar('train / fewshot_acc', acc, epoch+1)
         
         lr = optimizer.param_groups[0]['lr']
@@ -109,7 +119,7 @@ def train(args, trainloader, testloader, valloader, net, optimizer, scheduler, d
         writer.add_scalar('train / train_loss', running_loss, epoch+1)
         writer.add_scalar('train / learning_rate', lr, epoch+1)
         
-        torch.save(net.state_dict(), './model.pt')
+        torch.save(net.state_dict(), f'./{args.model}_{args.epochs}ep_{args.learningrate}lr.pt')
         
         running_loss = 0.0
         
@@ -117,12 +127,6 @@ def train(args, trainloader, testloader, valloader, net, optimizer, scheduler, d
             scheduler.step()
         
     print('Training finished',file=outputs_log)
-    
-    if args.test == 'fewshot':
-        print('--- test ---')
-        acc = fewshot_test(testloader, net, shots=5, device=device)
-        print('fewshot_acc : %.3f'%(acc))
-        print('fewshot_acc : %.3f'%(acc), file=outputs_log)
 
 
 def main():
@@ -134,16 +138,25 @@ def main():
     outputs_log = open(f'./outputs/{args.model}_{args.epochs}ep_{args.learningrate}lr_{cur_time}.txt','w')
     writer = SummaryWriter(f'./logs/{args.model}_{args.epochs}ep_{args.learningrate}lr_{cur_time}')
     
-    trainloader, testloader, valloader, num_classes = dataloader.load_dataset(args)
-    
     net = load_model(args)
     net.to(device)
-    #net.load_state_dict(torch.load('./moco_pretext.pt'))
+    net.load_state_dict(torch.load('protonet_600ep_0.001lr.pt'))
     optimizer,scheduler = set_parameters(args, net)
     
     if args.train:
-        print(f"Training start ...")
+        trainloader, testloader, valloader, num_classes = dataloader.load_dataset(args, args.dataset)
+        print(f"--- train ---")
         train(args, trainloader, testloader, valloader, net, optimizer, scheduler, device, writer, outputs_log)
+    
+    if args.test == 'fewshot':
+        trainloader, testloader, valloader, num_classes = dataloader.load_dataset(args, args.dataset)
+        print(f'--- {args.dataset} test ---')
+        acc = fewshot_test(testloader, net, args, device)
+        print('fewshot_acc : %.3f'%(acc))
+        print('fewshot_acc : %.3f'%(acc), file=outputs_log)
+    
+    elif args.test == 'crossdomain':
+        crossdomain_test(args, net, device, outputs_log)
         
     outputs_log.close()
     writer.close()

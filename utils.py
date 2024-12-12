@@ -6,19 +6,17 @@ import torch.optim as optim
 
 from warmup import WarmupCosineAnnealingScheduler
 
-import models.SSL as ssl
-import models.psco as psco
-
 def parsing_argument():
     parser = argparse.ArgumentParser(description="argparse_test")
     
     parser.add_argument('-e', '--epochs', metavar='int', type=int, help='epochs', default=2)
-    parser.add_argument('-lr', '--learningrate', metavar='float', type=float, help='lr', default=0.0001)
+    parser.add_argument('-lr', '--learningrate', metavar='float', type=float, help='lr', default=0.01)
     parser.add_argument('-d', '--dataset', metavar='str', type=str, help='dataset [miniimagenet, cifarfs]', default='miniimagenet')
     parser.add_argument('-opt', '--optimizer', metavar='str', type=str, help='optimizer [adam, sgd]', default='sgd')
     parser.add_argument('-crt', '--criterion', metavar='str', type=str, help='criterion [ce, mse]', default='ce')
     parser.add_argument('-tr', '--train', help='train', action='store_true')
     parser.add_argument('-val', '--val', help='validation', action='store_true')
+    parser.add_argument('-ad', '--adaptation', help='adaptation', action='store_true')
     parser.add_argument('-m', '--model', metavar='str', type=str, help='models [protonet, feat, relationnet]', default='moco')
     parser.add_argument('-bs', '--batch_size', metavar='int', type=int, help='batchsize', default=256)
     parser.add_argument('-tc', '--test', metavar='str', type=str, help='knn, fewshot', default='knn')
@@ -38,22 +36,13 @@ def set_parameters(args, net):
         scheduler = None
         #scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[20, 40, 80, 100, 120], gamma=0.5)
     if args.optimizer == 'sgd':
-        optimizer = optim.SGD(params=net.parameters(), lr=args.learningrate, weight_decay=5e-4, momentum=0.9, nesterov=True)
+        optimizer = optim.SGD(params=net.parameters(), lr=args.learningrate, weight_decay=0.001, momentum=0.9, nesterov=True)
         #scheduler = WarmupCosineAnnealingScheduler(optimizer, warmup_steps=10, base_lr=args.learningrate, T_max=100, eta_min=1e-3)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=400)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100)
 
     return optimizer,scheduler
 
-def load_model(args):
-    if args.model == 'moco':
-        net = ssl.MoCo(q_size=4096, momentum=0.999)
-    elif args.model == 'simclr':
-        net = ssl.SimCLR()
-    elif args.model == 'swav':
-        net = ssl.SwAV()
-    elif args.model == 'psco':
-        net = psco.PsCo()
-    return net
+
 
 def split_support_query_set(x, y, device, num_class=5, num_shots=5, num_queries=15, num_tasks=1, training=False):
     
@@ -80,3 +69,20 @@ def split_support_query_set(x, y, device, num_class=5, num_shots=5, num_queries=
         tasks.append([xs, xq, ys, yq])
         
     return tasks
+
+import models.SSL as ssl
+import models.psco as psco
+import models.fewshot_models as fewshot_models
+
+def load_model(args):
+    if args.model == 'moco':
+        net = ssl.MoCo(q_size=4096, momentum=0.999)
+    elif args.model == 'simclr':
+        net = ssl.SimCLR()
+    elif args.model == 'swav':
+        net = ssl.SwAV()
+    elif args.model == 'psco':
+        net = psco.PsCo()
+    elif args.model == 'protonet':
+        net = fewshot_models.ProtoNet()
+    return net

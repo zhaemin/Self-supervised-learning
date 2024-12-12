@@ -9,12 +9,16 @@ class SSLFramework(nn.Module):
         self.encoder= self.make_encoder()
         self.projector = self.make_mlp(512)
     
-    def make_mlp(self, input_dim):
-        return nn.Sequential(
+    def make_mlp(self, input_dim, last_bn=False):
+        mlp = nn.Sequential(
             nn.Linear(input_dim, 2048),
+            nn.BatchNorm1d(2048),
             nn.ReLU(),
-            nn.Linear(2048, 128)
-        )
+            nn.Linear(2048, 128))
+        if last_bn:
+            mlp.append(nn.BatchNorm1d(128))
+        
+        return mlp
     
     def make_encoder(self):
         encoder = models.resnet18()
