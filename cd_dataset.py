@@ -1,12 +1,16 @@
 """
 source : https://github.com/sungnyun/understanding-cdfsl
+        https://github.com/alinlab/PsCo
 All dataset classes in unified `torchvision.datasets.ImageFolder` format!
 """
 
 import os
+from PIL import Image
 
 import numpy as np
 import pandas as pd
+import torch
+import json
 from torchvision.datasets import ImageFolder
 
 from configs import *
@@ -100,41 +104,85 @@ class ChestXDataset(ImageFolder):
 
     _find_classes = find_classes  # compatibility with earlier versions
 
-'''
-class CarsDataset(ImageFolder):
+
+class JSONImageDataset(torch.utils.data.Dataset):
+    def __init__(self, dataset, root, split, transform, depth=0):
+        super().__init__()
+
+        with open(f'../data/cd-fsl/splits/{dataset}/{split}.json', 'r') as f:
+            dir_list = json.load(f)
+        class_to_idx = {category: i for i, category in enumerate(dir_list['label_names'])}
+
+        self.samples = []
+        self.targets = dir_list['image_labels']
+        _, self.targets = torch.tensor(self.targets).unique(return_inverse=True)
+        
+        if dataset == 'cars':
+            for file_name, index in zip(dir_list['image_names'], dir_list['image_labels']):
+                #new_file_name = file_name.split('/')[0] + '/0' + file_name.split('/')[1]
+                #file_name = new_file_name
+                file_path = os.path.join(root, file_name)
+                self.samples.append((file_path, int(index)))
+        else:
+            for path in dir_list['image_names']:
+                if dataset == 'cub':
+                    new_path = path.split('/')[1] + '/' + path.split('/')[2]
+                    path = new_path
+                file_path = os.path.join(root, path)
+                category = path.split('/')[depth]
+                self.samples.append((file_path, class_to_idx[category]))
+
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, index):
+        filename, y = self.samples[index]
+        img = Image.open(filename, mode='r').convert("RGB")
+        if self.transform:
+            img = self.transform(img)
+        return img, y
+
+
+class CarsDataset(JSONImageDataset):
     name = "cars"
 
-    def __init__(self, root=cars_path, *args, **kwargs):
-        super().__init__(root=root, *args, **kwargs)
+    def __init__(self, root='../data/cd-fsl/cars', split="novel", transform=None, depth=1):
+        super().__init__("cars", root, split, transform, depth)
 
 
-class CUBDataset(ImageFolder):
+class CUBDataset(JSONImageDataset):
     name = "cub"
 
-    def __init__(self, root=cub_path, *args, **kwargs):
-        super().__init__(root=root, *args, **kwargs)
+    def __init__(self, root='../data/cd-fsl/cub/images', split="novel", transform=None, depth=0):
+        super().__init__("cub", root, split, transform, depth)
 
 
-class PlacesDataset(ImageFolder):
+class PlacesDataset(JSONImageDataset):
     name = "places"
 
-    def __init__(self, root=places_path, *args, **kwargs):
-        super().__init__(root=root, *args, **kwargs)
+    def __init__(self, root='../data/cd-fsl/places', split="novel", transform=None, depth=1):
+        super().__init__("places", root, split, transform, depth)
 
 
-class PlantaeDataset(ImageFolder):
+class PlantaeDataset(JSONImageDataset):
     name = "plantae"
 
-    def __init__(self, root=plantae_path, *args, **kwargs):
-        super().__init__(root=root, *args, **kwargs)
-'''
+    def __init__(self, root='../data/cd-fsl/plantae', split="novel", transform=None, depth=0):
+        super().__init__("plantae", root, split, transform, depth)
+
 
 def load_crossdomain_dataset(dataset_name, transform):
     dataset_classes = [
         CropDiseaseDataset,
         EuroSATDataset,
         ISICDataset,
-        ChestXDataset
+        ChestXDataset,
+        CarsDataset,
+        CUBDataset,
+        PlacesDataset,
+        PlantaeDataset
     ]
 
     dataset_class_map = {
