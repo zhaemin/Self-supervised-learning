@@ -95,7 +95,13 @@ class VICReg(SSLFramework):
         
         std_x = torch.sqrt(x.var(dim=0) + 0.0001)
         std_y = torch.sqrt(y.var(dim=0) + 0.0001)
-        std_loss = torch.mean(F.relu(1 - std_x)) / 2 + torch.mean(F.relu(1 - std_y)) / 2
+        
+        if self.mixup:
+            z_mixup = z_mixup - z_mixup.mean(dim=0)
+            std_z = torch.sqrt(z_mixup.var(dim=0) + 0.0001)
+            std_loss = torch.mean(F.relu(1 - std_x)) / 3 + torch.mean(F.relu(1 - std_y)) / 3 + torch.mean(F.relu(1-std_z)) / 3
+        else:
+            std_loss = torch.mean(F.relu(1 - std_x)) / 2 + torch.mean(F.relu(1 - std_y)) / 2
         
         cov_x = (x.T @ x) / (batch_size - 1)
         cov_y = (y.T @ y) / (batch_size - 1)
