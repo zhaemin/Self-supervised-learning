@@ -19,8 +19,8 @@ from configs import *
 class CropDiseaseDataset(ImageFolder):
     name = "CropDisease"
 
-    def __init__(self, root='../data/cd-fsl/CropDisease/', *args, **kwargs):
-        super().__init__(root=os.path.join(root, "train"), *args, **kwargs)
+    def __init__(self, root='../data/cd-fsl/CropDisease/dataset/train/', *args, **kwargs):
+        super().__init__(root, *args, **kwargs)
 
 
 class EuroSATDataset(ImageFolder):

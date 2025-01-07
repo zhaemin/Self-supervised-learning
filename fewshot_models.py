@@ -31,6 +31,7 @@ class ConvNet(nn.Module):
         return x
 
 
+
 class ProtoNet(nn.Module):
     def __init__(self, backbone=ConvNet(), emb_dim=64):
         super(ProtoNet, self).__init__()

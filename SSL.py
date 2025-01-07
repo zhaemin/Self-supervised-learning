@@ -2,38 +2,147 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models
+import torch.optim as optim
+
+import copy
+from tqdm import tqdm
+import numpy as np
+
+
+import models.encoders as encoders
+
+from utils import split_support_query_set
+from sklearn.linear_model import LogisticRegression
 
 class SSLFramework(nn.Module):
-    def __init__(self):
+    def __init__(self, backbone):
         super(SSLFramework, self).__init__()
-        self.encoder= self.make_encoder()
-        self.projector = self.make_mlp(512)
-    
-    def make_mlp(self, input_dim, last_bn=False):
+        self.outdim = 256
+        self.backbone = backbone
+        self.encoder = self.make_encoder(self.backbone)
+        self.projector = self.make_mlp(self.outdim)
+        
+    def make_mlp(self, input_dim, hidden_dim=2048, num_layers=2, out_dim=128, last_bn=False):
         mlp = nn.Sequential(
-            nn.Linear(input_dim, 2048),
-            nn.BatchNorm1d(2048),
-            nn.ReLU(),
-            nn.Linear(2048, 128))
+            nn.Linear(input_dim, hidden_dim)
+            )
+        
+        for i in range(num_layers - 2):
+            mlp.append(nn.Sequential(
+                nn.BatchNorm1d(hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim)
+            ))
+        
+        if num_layers >= 2:
+            mlp.append(nn.Sequential(
+                nn.BatchNorm1d(hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, out_dim)
+            ))
+        
         if last_bn:
-            mlp.append(nn.BatchNorm1d(128))
+            mlp.append(nn.BatchNorm1d(out_dim))
         
         return mlp
     
-    def make_encoder(self):
-        encoder = models.resnet18()
-        encoder.conv1 = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1)
-        encoder.maxpool = nn.Identity()
-        encoder.fc = nn.Identity()
+    def make_encoder(self, backbone):
+        if backbone == 'resnet10':
+            encoder = encoders.ResNet10(num_classes=64, only_trunk=False, adaptive_pool=True)
+            self.outdim = encoder.classifier.weight.shape[1] #512
+            encoder.classifier = nn.Identity()
+        elif backbone == 'conv5':
+            encoder = encoders.convnet5()
+            self.outdim = 256
+        elif backbone == 'resnet18':
+            encoder = encoders.ResNet18(num_classes=64, only_trunk=False)
+            self.outdim = encoder.classifier.weight.shape[1]
+            encoder.classifier = nn.Identity()
         
         return encoder
     
     def encoding(self, x):
         return F.normalize(self.encoder(x), p=2)
+    
+    def fewshot_acc(self, args, inputs, labels, device):
+        with torch.no_grad():
+            correct = 0
+            total = 0
+            
+            x = self.encoder(inputs)
+            
+            tasks = split_support_query_set(x, labels, device, num_tasks=1, num_shots=args.num_shots)
+            
+            for x_support, x_query, y_support, y_query in tasks:
+                x_support = F.normalize(x_support)
+                x_query = F.normalize(x_query) # q d
+                prototypes = F.normalize(torch.sum(x_support.view(5, args.num_shots, -1), dim=1), dim=1) # 5 d
+                
+                logits = torch.einsum('qd, wd -> qw', x_query, prototypes)
+                _, predicted = torch.max(logits.data, 1)
+                correct += (predicted == y_query).sum().item()
+                total += y_query.size(0)
+                
+            acc = 100 * correct / total
+        return acc
+    
+    def ft_fewshot_acc(self, loader, device, n_iters, args):
+        total_acc = 0
+        
+        for data in tqdm(loader, desc="Test ..."):
+            inputs, labels = data
+            inputs, labels = inputs.to(device), labels.to(device)
+            
+            tasks = split_support_query_set(inputs, labels, device, num_tasks=1, num_shots=args.num_shots)
+            correct, total = 0, 0
+            
+            for x_support, x_query, y_support, y_query in tasks:
+                net = copy.deepcopy(self.encoder)
+                classifier = nn.Linear(self.outdim, args.train_num_ways).to(device)
+                optimizer = optim.SGD(classifier.parameters(), lr=0.01, momentum=0.9, weight_decay=0.001)
+                
+                net.eval()
+                classifier.train()
+                
+                with torch.no_grad():
+                    shots   = net(x_support)
+                    queries = net(x_query)
+                        
+                for _ in range(100):
+                    with torch.no_grad():
+                        shots   = shots.detach()
+                        queries = queries.detach()
+                        
+                    rand_id = np.random.permutation(args.train_num_ways * args.num_shots)
+                    batch_indices = [rand_id[i*4:(i+1)*4] for i in range(rand_id.size//4)]
+                    for id in batch_indices:
+                        x_train = shots[id]
+                        y_train = y_support[id]
+                        shots_pred = classifier(x_train)
+                        loss = F.cross_entropy(shots_pred, y_train)
+                        
+                        optimizer.zero_grad()
+                        loss.backward()
+                        optimizer.step()
+                
+                net.eval()
+                classifier.eval()
+                
+                with torch.no_grad():
+                    logits = classifier(queries)
+                    _, predicted = torch.max(logits.data, 1)
+                    correct += (predicted == y_query).sum().item()
+                    total += y_query.size(0)
+                    
+            acc = 100 * correct / total
+            total_acc += acc
+            
+        accuracy = total_acc / len(loader)
+        return accuracy
 
 class SimCLR(SSLFramework):
-    def __init__(self):
-        super(SimCLR, self).__init__()
+    def __init__(self, backbone):
+        super(SimCLR, self).__init__(backbone)
         
     def forward(self, inputs, device):
         batch_size = inputs[0].size(0)
@@ -57,8 +166,8 @@ class SimCLR(SSLFramework):
         return loss
 
 class MoCo(SSLFramework):
-    def __init__(self, q_size, momentum):
-        super(MoCo, self).__init__()
+    def __init__(self, backbone, q_size, momentum):
+        super(MoCo, self).__init__(backbone)
         self.dim = 128
         
         self.register_buffer('queue', F.normalize(torch.randn(q_size, self.dim), p=2))
@@ -66,8 +175,8 @@ class MoCo(SSLFramework):
         self.max_queue_size = q_size
         self.momentum = momentum
         
-        self.projector_k = self.make_mlp(512)
-        self.encoder_k = self.make_encoder()
+        self.projector_k = self.make_mlp(self.outdim)
+        self.encoder_k = self.make_encoder(backbone)
         
         for k_param, q_param in zip(self.encoder_k.parameters(), self.encoder.parameters()):
             k_param.data.copy_(q_param.data)
@@ -115,8 +224,8 @@ class MoCo(SSLFramework):
             self.idx[0] = (idx + batch_size) % self.max_queue_size
 
 class SwAV(SSLFramework):
-    def __init__(self):
-        super(SwAV, self).__init__()
+    def __init__(self, backbone):
+        super(SwAV, self).__init__(backbone)
         self.temperature = 0.1
         self.dim = 128
         self.mm_prototypes = nn.Linear(128, 3000)
@@ -144,7 +253,7 @@ class SwAV(SSLFramework):
         prob_2 = F.log_softmax(scores_2 / self.temperature, dim=1)
         
         loss = -0.5 * torch.mean(torch.sum(code_1  * prob_2, dim=1) + torch.sum(code_2 * prob_1, dim=1))
-                
+        
         return loss
     
 def sinkhorn(scores, device, eps=0.05, niters=3):

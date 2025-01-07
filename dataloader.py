@@ -7,31 +7,34 @@ import numpy as np
 import cd_dataset
 
 class SSLTransform(torch.nn.Module):
-    def __init__(self, img_size):
+    def __init__(self, img_size, model):
         super(SSLTransform, self).__init__()
+        self.model = model
         self.transform_strong = transforms.Compose([ 
-            transforms.RandomResizedCrop((img_size, img_size), scale=(0.2 ,1)),
-            transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.1),
+            transforms.RandomResizedCrop(img_size, scale=(0.2 ,1)),
+            transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
             transforms.RandomGrayscale(p=0.2),
             transforms.RandomHorizontalFlip(),
-            #transforms.GaussianBlur(kernel_size=3),
             transforms.ToTensor(),
             transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225))])
         
         self.transform_weak = transforms.Compose([ 
-            transforms.RandomResizedCrop((img_size, img_size), scale=(0.2 ,1)),
+            transforms.RandomResizedCrop(img_size, scale=(0.2 ,1)),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225))])
         
         self.transform_test = transforms.Compose([ 
+            transforms.Resize((img_size, img_size), antialias=True),
             transforms.ToTensor(),
-            #transforms.Resize((img_size, img_size), antialias=True),
             transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225))])
         
     def __call__(self, x):
         x1 = self.transform_strong(x)
-        x2 = self.transform_weak(x)
+        if self.model == 'psco':
+            x2 = self.transform_weak(x)
+        else:
+            x2 = self.transform_strong(x)
         x = self.transform_test(x)
         
         return [x1, x2, x]
@@ -93,7 +96,7 @@ def load_dataset(args, dataset):
         transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225))])
     
     if dataset == 'cifar10':
-        ssltransform = SSLTransform(32)
+        ssltransform = SSLTransform(32, args.model)
         trainset = torchvision.datasets.CIFAR10(root = '../data/cifar10', train=True, download=True, transform=ssltransform)
         testset = torchvision.datasets.CIFAR10(root = '../data/cifar10', train=False, download=True, transform=transform_test)
         
@@ -104,18 +107,22 @@ def load_dataset(args, dataset):
         num_classes = 10
     
     elif dataset == 'miniimagenet':
-        ssltransform = SSLTransform(84)
+        ssltransform = SSLTransform(84, args.model)
+        transform_test = transforms.Compose([
+            transforms.Resize(84, antialias=True),
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225))])
         
         trainset = torchvision.datasets.ImageFolder(root='../data/fewshotdata/miniimagenet/data/train', transform=ssltransform)
-        testset = torchvision.datasets.ImageFolder(root='../data/fewshotdata/miniimagenet/data/test', transform=ssltransform)
+        testset = torchvision.datasets.ImageFolder(root='../data/fewshotdata/miniimagenet/data/test', transform=transform_test)
         valset = torchvision.datasets.ImageFolder(root='../data/fewshotdata/miniimagenet/data/val', transform=transform_test)
         num_classes = 64
         
         testset_labels = torch.LongTensor(testset.targets)
         valset_labels = torch.LongTensor(valset.targets)
         
-        test_sampler = FewShotSampler(testset_labels, args.test_num_ways, args.num_shots, args.num_queries, 150, num_tasks=4)
-        val_sampler = FewShotSampler(valset_labels, args.test_num_ways, args.num_shots, args.num_queries, 25, num_tasks=4)
+        test_sampler = FewShotSampler(testset_labels, args.test_num_ways, args.num_shots, args.num_queries, 600, num_tasks=1)
+        val_sampler = FewShotSampler(valset_labels, args.test_num_ways, args.num_shots, args.num_queries, 100, num_tasks=1)
         
         trainloader = DataLoader(trainset, batch_size=args.batch_size, shuffle=True, drop_last=True, num_workers=2, pin_memory=True)
         valloader = DataLoader(valset, batch_sampler=val_sampler, pin_memory=True)
@@ -131,15 +138,15 @@ def load_dataset(args, dataset):
         num_classes = None
         
         transform_test = transforms.Compose([ 
+            transforms.Resize(84, antialias=True),
+            transforms.CenterCrop(84),
             transforms.ToTensor(),
-            transforms.Resize((84,84), antialias=True),
             transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225))])
         
         testset = cd_dataset.load_crossdomain_dataset(dataset, transform_test)
             
         testset_labels = torch.LongTensor(testset.targets)
-        print(len(testset_labels))
-        test_sampler = FewShotSampler(testset_labels, args.test_num_ways, args.num_shots, args.num_queries, 150, num_tasks=4)
+        test_sampler = FewShotSampler(testset_labels, args.test_num_ways, args.num_shots, args.num_queries, 600, num_tasks=1)
         testloader = DataLoader(testset, batch_sampler=test_sampler, pin_memory=True)
     
     return trainloader, testloader, valloader, num_classes
